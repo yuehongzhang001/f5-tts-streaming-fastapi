@@ -3,6 +3,8 @@ import logging
 import re
 import time
 import json
+import struct
+import io
 from importlib.resources import files
 
 import numpy as np
@@ -47,6 +49,32 @@ CHARACTERS_FILE = os.path.join(BASE_DIR, "characters.json")
 OUTPUT_WAV = os.path.join(BASE_DIR, "output.wav")
 DEFAULT_REF_AUDIO_PATH = os.path.join(BASE_DIR, "audio/female_1.mp3")
 DEFAULT_REF_TEXT = "光线穿过百叶窗在桌面投下均匀条纹"
+
+
+def create_wav_header(sample_rate: int, num_channels: int = 1, bits_per_sample: int = 16):
+    """创建 WAV 文件头"""
+    # 注意：这里 data_size 设为最大值，因为流式传输时我们不知道总大小
+    datasize = 0xFFFFFFFF - 36  # 最大可能值
+    
+    header = struct.pack('<4sI4s', b'RIFF', datasize + 36, b'WAVE')
+    
+    # fmt chunk
+    fmt_chunk = struct.pack(
+        '<4sIHHIIHH',
+        b'fmt ',
+        16,  # fmt chunk size
+        1,   # PCM format
+        num_channels,
+        sample_rate,
+        sample_rate * num_channels * bits_per_sample // 8,  # byte rate
+        num_channels * bits_per_sample // 8,  # block align
+        bits_per_sample
+    )
+    
+    # data chunk header
+    data_header = struct.pack('<4sI', b'data', datasize)
+    
+    return header + fmt_chunk + data_header
 
 
 class TTSModel:
@@ -269,13 +297,17 @@ def generate_audio_for_sentence(sentence: str, ref_audio_tuple, ref_text: str, n
 
 
 def audio_stream_generator(text: str, character: str = "default", nfe_step: int = None, cfg_strength: float = None):
-    """流式生成器 - 按完整句子流式返回"""
+    """流式生成器 - 返回 WAV 格式的音频流"""
     gen_start = time.time()
     req_id = f"{int(gen_start * 1000) % 100000}"
 
     logger.info(f"[{req_id}] Stream Request: '{text[:80]}{'...' if len(text) > 80 else ''}' (character: {character})")
 
     try:
+        # 首先发送 WAV 文件头
+        wav_header = create_wav_header(tts_model.sampling_rate)
+        yield wav_header
+        
         # 获取角色配置
         char_config = tts_model.get_character_config(character)
         ref_file = char_config["ref_file"]
@@ -312,6 +344,7 @@ def audio_stream_generator(text: str, character: str = "default", nfe_step: int 
                     logger.info(f"[{req_id}] ⚡ First audio at {ttfa:.0f}ms")
                     first_logged = True
 
+                # 直接发送 PCM 数据（已经有 WAV 头了）
                 yield audio_bytes
 
             logger.info(f"[{req_id}] Chunk[{i+1}/{len(sentences)}] done in {(time.time()-sent_start)*1000:.0f}ms")
@@ -326,18 +359,17 @@ def audio_stream_generator(text: str, character: str = "default", nfe_step: int 
 
 @app.post("/tts/stream")
 def tts_stream(req: TTSRequest):
-    """流式TTS API - 返回PCM音频流"""
+    """流式TTS API - 返回 WAV 格式音频流（Postman 可直接播放）"""
     if not req.text.strip():
         raise HTTPException(400, "Empty text")
 
     return StreamingResponse(
         audio_stream_generator(req.text, req.character, req.nfe_step, req.cfg_strength),
-        media_type="audio/pcm",
+        media_type="audio/wav",  # 改为 audio/wav
         headers={
-            "X-Sample-Rate": str(tts_model.sampling_rate),
-            "X-Audio-Format": "pcm_s16le",
-            "X-Channels": "1",
+            "Content-Disposition": "inline; filename=stream.wav",
             "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
         },
     )
 
@@ -410,7 +442,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         app, 
-        host="0.0.0.0",  # 改为0.0.0.0以支持外部访问
+        host="0.0.0.0",
         port=8000, 
         log_level="info",
         access_log=False,

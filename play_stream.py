@@ -2,152 +2,403 @@ import requests
 import pyaudio
 import time
 from datetime import datetime
-import socket
+from typing import Optional, Callable
+from dataclasses import dataclass
 
-def play_streaming_audio_optimized(text: str, character: str = "default", url: str = "http://127.0.0.1:8000/tts/stream"):
-    """优化的实时播放 - 使用更底层的连接控制"""
+
+@dataclass
+class AudioConfig:
+    """Audio configuration"""
+    sample_rate: int = 24000
+    channels: int = 1
+    sample_width: int = 2  # 16-bit = 2 bytes
+    format: int = pyaudio.paInt16
+    frames_per_buffer: int = 2048
+
+
+@dataclass
+class StreamStats:
+    """Stream playback statistics"""
+    connection_time_ms: float = 0
+    first_chunk_time_ms: float = 0
+    first_play_time_ms: float = 0
+    total_time_ms: float = 0
+    total_chunks: int = 0
+    total_bytes: int = 0
+    audio_duration_s: float = 0
+    rtf: float = 0  # Real-time Factor
     
-    def log(message):
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        print(f"[{timestamp}] {message}")
-    
-    # 初始化 PyAudio
-    p = pyaudio.PyAudio()
-    stream = p.open(
-        format=pyaudio.paInt16,
-        channels=1,
-        rate=24000,
-        output=True,
-        frames_per_buffer=1024  # ⚡ 减小缓冲区
-    )
-    
-    start_time = time.time()
-    request_sent_time = None
-    first_chunk_received_time = None
-    first_audio_played_time = None
-    
-    try:
-        log(f"📝 Text: {text[:80]}{'...' if len(text) > 80 else ''}")
-        log(f"👤 Character: {character}")
-        log(f"🚀 Sending request to {url}")
-        
-        # ⚡ 使用 Session 以复用连接
-        session = requests.Session()
-        
-        # ⚡ 禁用连接池延迟
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=1,
-            pool_maxsize=1,
-            max_retries=0
+    def __str__(self):
+        return (
+            f"Statistics:\n"
+            f"  - Connection time: {self.connection_time_ms:.1f}ms\n"
+            f"  - Time to first chunk: {self.first_chunk_time_ms:.1f}ms\n"
+            f"  - Time to first play: {self.first_play_time_ms:.1f}ms\n"
+            f"  - Total time: {self.total_time_ms:.1f}ms ({self.total_time_ms/1000:.2f}s)\n"
+            f"  - Total chunks: {self.total_chunks}\n"
+            f"  - Total data: {self.total_bytes/1024:.2f} KB\n"
+            f"  - Audio duration: ~{self.audio_duration_s:.2f}s\n"
+            f"  - Real-time Factor: {self.rtf:.2f}x {'⚡' if self.rtf < 1 else '🐌'}"
         )
-        session.mount('http://', adapter)
+
+
+class StreamingTTSPlayer:
+    """Streaming TTS Audio Player"""
+    
+    def __init__(
+        self, 
+        base_url: str = "http://127.0.0.1:8000",
+        audio_config: Optional[AudioConfig] = None,
+        verbose: bool = True
+    ):
+        """
+        Initialize player
         
-        # 发送请求
-        request_start = time.time()
-        response = session.post(
-            url,
-            json={"text": text, "character": character},
-            stream=True,
-            timeout=(1, 30),  # ⚡ (连接超时, 读取超时)
-            headers={
-                'Connection': 'keep-alive',
-                'Accept-Encoding': 'identity',  # ⚡ 禁用压缩
-            }
-        )
-        request_sent_time = time.time()
+        Args:
+            base_url: TTS server address
+            audio_config: Audio configuration, default configuration is used if None
+            verbose: Whether to print detailed logs
+        """
+        self.base_url = base_url.rstrip('/')
+        self.audio_config = audio_config or AudioConfig()
+        self.verbose = verbose
+        self.session = None
         
-        connection_time = (request_sent_time - request_start) * 1000
-        log(f"✅ Connection established (took {connection_time:.1f}ms)")
+    def _log(self, message: str):
+        """Print log"""
+        if self.verbose:
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            print(f"[{timestamp}] {message}")
+    
+    def _init_session(self):
+        """Initialize HTTP session"""
+        if self.session is None:
+            self.session = requests.Session()
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=1,
+                pool_maxsize=1,
+                max_retries=0
+            )
+            self.session.mount('http://', adapter)
+            self.session.mount('https://', adapter)
+    
+    def _skip_wav_header(self, response_iter, header_size: int = 44):
+        """
+        Skip WAV file header
         
-        if response.status_code != 200:
-            log(f"❌ Error: HTTP {response.status_code}")
-            return
+        Args:
+            response_iter: Response iterator
+            header_size: WAV file header size (default 44 bytes)
+            
+        Yields:
+            Audio data chunks
+        """
+        header_buffer = b''
+        header_skipped = False
         
-        log(f"📡 Streaming started, waiting for audio data...")
-        
-        chunk_count = 0
-        total_bytes = 0
-        empty_reads = 0
-        
-        # ⚡ 使用更小的读取块
-        for chunk in response.iter_content(chunk_size=2048):  # 从 4096 降到 2048
+        for chunk in response_iter:
             if not chunk:
-                empty_reads += 1
-                if empty_reads > 10:
-                    break
+                continue
+                
+            if not header_skipped:
+                header_buffer += chunk
+                if len(header_buffer) >= header_size:
+                    # Skip header, return remaining data
+                    audio_data = header_buffer[header_size:]
+                    header_skipped = True
+                    if audio_data:
+                        yield audio_data
                 continue
             
+            yield chunk
+    
+    def play(
+        self, 
+        text: str, 
+        character: str = "default",
+        nfe_step: Optional[int] = None,
+        cfg_strength: Optional[float] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> StreamStats:
+        """
+        Play text-to-speech
+        
+        Args:
+            text: Text to convert
+            character: Character name
+            nfe_step: Inference steps (optional)
+            cfg_strength: CFG strength (optional)
+            progress_callback: Progress callback function callback(current_bytes, elapsed_ms)
+            
+        Returns:
+            StreamStats: Playback statistics
+        """
+        stats = StreamStats()
+        start_time = time.time()
+        
+        p = None
+        stream = None
+        
+        try:
+            self._log(f"📝 Text: {text[:80]}{'...' if len(text) > 80 else ''}")
+            self._log(f"👤 Character: {character}")
+            self._log(f"🚀 Connecting to {self.base_url}")
+            
+            # Initialize session
+            self._init_session()
+            
+            # Prepare request data
+            request_data = {
+                "text": text,
+                "character": character
+            }
+            if nfe_step is not None:
+                request_data["nfe_step"] = nfe_step
+            if cfg_strength is not None:
+                request_data["cfg_strength"] = cfg_strength
+            
+            # Send request
+            request_start = time.time()
+            response = self.session.post(
+                f"{self.base_url}/tts/stream",
+                json=request_data,
+                stream=True,
+                timeout=(3, 60),
+                headers={
+                    'Connection': 'keep-alive',
+                    'Accept-Encoding': 'identity',
+                }
+            )
+            stats.connection_time_ms = (time.time() - request_start) * 1000
+            
+            self._log(f"✅ Connected (took {stats.connection_time_ms:.1f}ms)")
+            
+            if response.status_code != 200:
+                self._log(f"❌ Error: HTTP {response.status_code}")
+                try:
+                    error_detail = response.json()
+                    self._log(f"   Error detail: {error_detail}")
+                except:
+                    error_detail = response.text[:500]
+                    self._log(f"   Response: {error_detail}")
+                raise Exception(f"Server returned status {response.status_code}: {error_detail}")
+            
+            # Initialize audio stream
+            p = pyaudio.PyAudio()
+            stream = p.open(
+                format=self.audio_config.format,
+                channels=self.audio_config.channels,
+                rate=self.audio_config.sample_rate,
+                output=True,
+                frames_per_buffer=self.audio_config.frames_per_buffer
+            )
+            
+            self._log(f"🔊 Audio stream ready ({self.audio_config.sample_rate}Hz, {self.audio_config.channels}ch)")
+            
+            # Play audio
+            last_log_time = time.time()
             empty_reads = 0
+            max_empty_reads = 20
             
-            # 记录第一个音频块
-            if first_chunk_received_time is None:
-                first_chunk_received_time = time.time()
-                ttfc = (first_chunk_received_time - start_time) * 1000
-                log(f"🎵 First chunk received! (TTFC: {ttfc:.1f}ms)")
+            for audio_chunk in self._skip_wav_header(
+                response.iter_content(chunk_size=4096)
+            ):
+                if not audio_chunk:
+                    empty_reads += 1
+                    if empty_reads > max_empty_reads:
+                        break
+                    continue
+                
+                empty_reads = 0
+                
+                # Record first audio chunk
+                if stats.total_chunks == 0:
+                    stats.first_chunk_time_ms = (time.time() - start_time) * 1000
+                    self._log(f"🎵 First chunk received (TTFC: {stats.first_chunk_time_ms:.1f}ms)")
+                
+                # Play audio
+                stream.write(audio_chunk)
+                
+                # Record first playback
+                if stats.total_chunks == 0:
+                    stats.first_play_time_ms = (time.time() - start_time) * 1000
+                    self._log(f"🔊 First audio played (TTFP: {stats.first_play_time_ms:.1f}ms)")
+                
+                stats.total_chunks += 1
+                stats.total_bytes += len(audio_chunk)
+                
+                # Progress callback
+                if progress_callback:
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    progress_callback(stats.total_bytes, int(elapsed_ms))
+                
+                # Periodic progress output
+                current_time = time.time()
+                if current_time - last_log_time >= 1.0:
+                    elapsed = (current_time - start_time) * 1000
+                    self._log(
+                        f"📊 Progress: {stats.total_chunks} chunks, "
+                        f"{stats.total_bytes/1024:.1f}KB, {elapsed:.0f}ms"
+                    )
+                    last_log_time = current_time
             
-            # 播放音频
-            stream.write(chunk)
+            # Wait for playback to complete
+            time.sleep(0.1)
             
-            # 记录第一次播放
-            if first_audio_played_time is None:
-                first_audio_played_time = time.time()
-                ttfp = (first_audio_played_time - start_time) * 1000
-                log(f"🔊 First audio played! (TTFP: {ttfp:.1f}ms)")
-                log(f"   ⏱️  Request → First Play: {ttfp:.1f}ms")
+            # Calculate statistics
+            stats.total_time_ms = (time.time() - start_time) * 1000
+            stats.audio_duration_s = stats.total_bytes / (
+                self.audio_config.sample_rate * self.audio_config.sample_width
+            )
+            stats.rtf = (stats.total_time_ms / 1000) / stats.audio_duration_s if stats.audio_duration_s > 0 else 0
             
-            chunk_count += 1
-            total_bytes += len(chunk)
+            self._log(f"✨ Playback finished!")
+            self._log(str(stats))
             
-            # 每 10 个 chunk 输出进度
-            if chunk_count % 10 == 0:
-                elapsed = (time.time() - start_time) * 1000
-                log(f"📊 Progress: {chunk_count} chunks, {total_bytes/1024:.1f}KB, {elapsed:.0f}ms elapsed")
-        
-        # 统计
-        end_time = time.time()
-        total_duration = (end_time - start_time) * 1000
-        
-        log(f"✨ Playback finished!")
-        log(f"📈 Statistics:")
-        log(f"   - Total chunks: {chunk_count}")
-        log(f"   - Total data: {total_bytes/1024:.2f} KB")
-        log(f"   - Total time: {total_duration:.1f}ms ({total_duration/1000:.2f}s)")
-        
-        if first_chunk_received_time and first_audio_played_time:
-            log(f"   - Connection time: {connection_time:.1f}ms")
-            log(f"   - Time to first chunk (TTFC): {(first_chunk_received_time - start_time)*1000:.1f}ms")
-            log(f"   - Time to first play (TTFP): {(first_audio_played_time - start_time)*1000:.1f}ms")
+            return stats
             
-            audio_duration = total_bytes / (24000 * 2)
-            log(f"   - Audio duration: ~{audio_duration:.2f}s (estimated)")
-            
-            rtf = total_duration / 1000 / audio_duration if audio_duration > 0 else 0
-            log(f"   - Real-time Factor (RTF): {rtf:.2f}x {'⚡' if rtf < 1 else '🐌'}")
-        
-    except KeyboardInterrupt:
-        log(f"⏸️  Interrupted")
-    except Exception as e:
-        log(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-        log(f"🧹 Resources cleaned up")
+        except KeyboardInterrupt:
+            self._log(f"⏸️  Interrupted by user")
+            raise
+        except requests.exceptions.Timeout:
+            self._log(f"❌ Request timeout")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            self._log(f"❌ Connection error: {e}")
+            raise
+        except Exception as e:
+            self._log(f"❌ Error: {e}")
+            raise
+        finally:
+            # Clean up resources
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except:
+                    pass
+            if p:
+                try:
+                    p.terminate()
+                except:
+                    pass
+            self._log(f"🧹 Cleaned up")
+    
+    def close(self):
+        """Close session"""
+        if self.session:
+            self.session.close()
+            self.session = None
+    
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.close()
 
+
+def play_tts(
+    text: str,
+    character: str = "default",
+    base_url: str = "http://127.0.0.1:8000",
+    verbose: bool = True
+) -> StreamStats:
+    """
+    Convenience function: Play single text
+    
+    Args:
+        text: Text to convert
+        character: Character name
+        base_url: TTS server address
+        verbose: Whether to print detailed logs
+        
+    Returns:
+        StreamStats: Playback statistics
+    """
+    with StreamingTTSPlayer(base_url=base_url, verbose=verbose) as player:
+        return player.play(text, character)
+
+
+# ============================================================================
+# Usage examples
+# ============================================================================
 
 if __name__ == "__main__":
-    test_cases = [
-        ("“你今天到底怎么回事啊？电话不接消息不回，急死我了！”“我开会呢！不是说了今天项目汇报吗？你明明知道的呀。”“那也总该抽空看一眼手机吧？”“呸呸呸，能不能念我点好？你最近怎么这么黏人啊？”“我黏人？上周你说忙我三天都没打扰你！你一点都不想我是不是？”“想想想！但我也要搬砖啊宝贝，你当我是超人啊？”“你凶什么凶！我就是担心你嘛…”“哎…我错了。就是今天压力太大了，不该冲你发火的。”", "female_1")
-        ]
     
-    for i, (text, character) in enumerate(test_cases, 1):
-        print(f"\n{'='*80}")
-        print(f"Test Case {i}/{len(test_cases)}")
-        print(f"{'='*80}\n")
-        play_streaming_audio_optimized(text, character)
+    # Method 1: Using convenience function (recommended for single playback)
+    print("="*80)
+    print("Example 1: Using convenience function")
+    print("="*80 + "\n")
+    
+    stats = play_tts(
+        text="Hello, this is a simple test.",
+        character="default"
+    )
+    print(f"\nReturned statistics: RTF = {stats.rtf:.2f}x\n")
+    
+    
+    # Method 2: Using player instance (recommended for multiple playbacks)
+    print("\n" + "="*80)
+    print("Example 2: Using player instance to play multiple texts")
+    print("="*80 + "\n")
+    
+    with StreamingTTSPlayer(base_url="http://127.0.0.1:8000", verbose=True) as player:
         
-        if i < len(test_cases):
-            print(f"\n⏳ Waiting 2 seconds...\n")
-            time.sleep(2)
+        texts = [
+            "First test text.",
+            "Second test text, slightly longer to test the effect of streaming playback.",
+            "\"What's wrong with you today? You didn't answer calls or messages, you nearly scared me to death!\" \"I was in a meeting! Didn't I tell you it was the project report today? You knew that.\" \"Well, you should at least find time to check your phone.\" \"Come on, can't you say something nice for a change? Have you been clingy lately?\" \"Clingy? I didn't bother you for three days last week when you said you were busy! Don't you miss me at all?\" \"I do miss you! But I also have to work, honey. Do you think I'm a superhero?\" \"Why are you so aggressive? I'm just worried about you...\" \"Ah... I was wrong. I was just under too much pressure today, shouldn't have taken it out on you.\""
+        ]
+        
+        for i, text in enumerate(texts, 1):
+            print(f"\n{'─'*80}")
+            print(f"Playing {i}/{len(texts)}")
+            print(f"{'─'*80}\n")
+            
+            stats = player.play(text, character="default")
+            
+            if i < len(texts):
+                print(f"\n⏳ Waiting 1 second...\n")
+                time.sleep(1)
+    
+    
+    # Method 3: With progress callback
+    print("\n" + "="*80)
+    print("Example 3: Using progress callback")
+    print("="*80 + "\n")
+    
+    def my_progress_callback(bytes_received, elapsed_ms):
+        """Custom progress callback"""
+        # Here you can update UI progress bar, etc.
+        pass
+    
+    with StreamingTTSPlayer(verbose=True) as player:
+        player.play(
+            text="This is an example with progress callback.",
+            character="default",
+            progress_callback=my_progress_callback
+        )
+    
+    
+    # Method 4: Custom audio configuration
+    print("\n" + "="*80)
+    print("Example 4: Custom audio configuration")
+    print("="*80 + "\n")
+    
+    custom_config = AudioConfig(
+        sample_rate=24000,
+        channels=1,
+        sample_width=2,
+        format=pyaudio.paInt16,
+        frames_per_buffer=4096  # Larger buffer
+    )
+    
+    with StreamingTTSPlayer(audio_config=custom_config, verbose=True) as player:
+        player.play("Playback using custom audio configuration.")
+    
+    
+    print("\n" + "="*80)
+    print("All examples completed!")
+    print("="*80)
