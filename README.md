@@ -107,7 +107,7 @@ curl -X POST http://localhost:8080/tts/stream \
 Generate a complete audio file:
 
 ```bash
-curl -X POST http://localhost:8080/tts \
+curl -X POST http://localhost:8000/tts \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello, this is a test of the voice synthesis system.",
@@ -121,7 +121,7 @@ curl -X POST http://localhost:8080/tts \
 Get a list of all available characters:
 
 ```bash
-curl -X GET http://localhost:8080/characters
+curl -X GET http://localhost:8000/characters
 ```
 
 ### 4. Health Check (`/health`)
@@ -129,7 +129,7 @@ curl -X GET http://localhost:8080/characters
 Check if the server is running:
 
 ```bash
-curl -X GET http://localhost:8080/health
+curl -X GET http://localhost:8000/health
 ```
 
 ## Notes
