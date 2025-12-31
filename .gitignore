@@ -1,0 +1,14 @@
+# Ignore audio folder
+audio/
+
+# Ignore test folder
+test/
+
+ai chat/
+
+# Ignore personal configuration files
+characters.json
+
+.lingma/
+
+__pycache__/
