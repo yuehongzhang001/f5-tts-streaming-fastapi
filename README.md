@@ -1,6 +1,6 @@
-# Voice Test Project
+README.md
 
-This is a text-to-speech project that uses F5-TTS to generate audio from text. The project supports multiple characters with different voice configurations.
+This is a text-to-speech project that uses F5-TTS to generate audio from text. The project provides an API extension that adds streaming mode support to HTTP requests.
 
 ## Purpose
 
