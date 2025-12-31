@@ -2,6 +2,10 @@
 
 This is a text-to-speech project that uses F5-TTS to generate audio from text. The project supports multiple characters with different voice configurations.
 
+## Purpose
+
+This project aims to address the lack of a streaming mode in F5-TTS's HTTP requests. It借鉴es the streaming approach from the socket_server in the F5-TTS project. However, it still requires waiting for the first chunk to be processed before audio can be returned, so the initial audio latency cannot be avoided (1-3 seconds).
+
 ## Prerequisites
 
 Before running this project, you must have the F5-TTS project installed and configured properly. Please follow the installation instructions at:
