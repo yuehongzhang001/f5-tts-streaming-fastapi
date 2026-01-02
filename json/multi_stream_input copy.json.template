@@ -1,0 +1,98 @@
+ [
+    {
+      "text": "你今天到底怎么回事啊？电话不接消息不回，急死我了！",
+      "character": "female_3"
+    },
+    {
+      "text": "我开会呢！不是说了今天项目汇报吗？你明明知道的呀。",
+      "character": "male_2"
+    },
+    {
+      "text": "那也总该抽空看一眼手机吧？",
+      "character": "female_3"
+    },
+    {
+      "text": "你最近怎么这么黏人啊？",
+      "character": "male_2"
+    },
+    {
+      "text": "我黏人？上周你说忙我三天都没打扰你！你一点都不想我是不是？",
+      "character": "female_3"
+    },
+    {
+      "text": "想想想！但我也要搬砖啊宝贝，你当我是超人啊？",
+      "character": "male_2"
+    },
+    {
+      "text": "你凶什么凶！我就是担心你嘛…",
+      "character": "female_3"
+    },
+    {
+      "text": "哎…我错了。就是今天压力太大了，不该冲你发火的。",
+      "character": "male_2"
+    },
+    {
+      "text": "那你晚饭吃了吗？胃疼又该犯了。",
+      "character": "female_3"
+    },
+    {
+      "text": "还没…你呢？肯定又随便啃面包对付吧？",
+      "character": "male_2"
+    },
+    {
+      "text": "要你管！谁让你不回来陪我吃…我给你点个粥吧？",
+      "character": "female_3"
+    },
+    {
+      "text": "你点我就吃。对了，周末我调休，陪你一整天好不好？",
+      "character": "male_2"
+    },
+    {
+      "text": "真的？那我要去动物园！你上次鸽子我两次了！",
+      "character": "female_3"
+    },
+    {
+      "text": "去去去！这次天塌了都陪你去。还生气吗？",
+      "character": "male_2"
+    },
+    {
+      "text": "气！但看你可怜巴巴的…勉强原谅你啦。",
+      "character": "female_3"
+    },
+    {
+      "text": "粥到楼下了？我好像听见敲门声…你去拿一下？",
+      "character": "male_2"
+    },
+    {
+      "text": "懒死你算了！坐着吧，我去拿。",
+      "character": "female_3"
+    },
+    {
+      "text": "嘿嘿，还是我老婆心疼我…明天给你带那家超难排的泡芙！",
+      "character": "male_2"
+    },
+    {
+      "text": "谁是你老婆！…要抹茶味的，两个！",
+      "character": "female_3"
+    },
+    {
+      "text": "买！给你买一盒！现在能视频了吗？想看看你。",
+      "character": "male_2"
+    },
+    {
+      "text": "不要，我头发乱糟糟的…等会儿，我扒拉两下。",
+      "character": "female_3"
+    },
+    {
+      "text": "不急，你什么样我没见过？其实刚刚开会时偷想你三次。",
+      "character": "male_2"
+    },
+    {
+      "text": "油嘴滑舌！…开啦开啦，看到没有？",
+      "character": "female_3"
+    },
+    {
+      "text": "看到了…你眼睛怎么有点红？是不是又偷偷哭了？",
+      "character": "male_2"
+    }
+]

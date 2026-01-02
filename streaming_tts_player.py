@@ -111,78 +111,22 @@ class StreamingTTSPlayer:
                 continue
             
             yield chunk
-    
-    def play(
-        self, 
-        text: str, 
-        character: str = "default",
-        nfe_step: Optional[int] = None,
-        cfg_strength: Optional[float] = None,
-        progress_callback: Optional[Callable[[int, int], None]] = None
-    ) -> StreamStats:
+
+    def _play_audio_stream(self, response, stats: StreamStats, start_time: float, 
+                          progress_callback: Optional[Callable[[int, int], None]] = None):
         """
-        Play text-to-speech
+        Internal method to handle audio stream playback
         
         Args:
-            text: Text to convert
-            character: Character name
-            nfe_step: Inference steps (optional)
-            cfg_strength: CFG strength (optional)
-            progress_callback: Progress callback function callback(current_bytes, elapsed_ms)
-            
-        Returns:
-            StreamStats: Playback statistics
+            response: HTTP response object
+            stats: StreamStats object to update
+            start_time: Time when request started
+            progress_callback: Progress callback function
         """
-        stats = StreamStats()
-        start_time = time.time()
-        
         p = None
         stream = None
         
         try:
-            self._log(f"📝 Text: {text[:80]}{'...' if len(text) > 80 else ''}")
-            self._log(f"👤 Character: {character}")
-            self._log(f"🚀 Connecting to {self.base_url}")
-            
-            # Initialize session
-            self._init_session()
-            
-            # Prepare request data
-            request_data = {
-                "text": text,
-                "character": character
-            }
-            if nfe_step is not None:
-                request_data["nfe_step"] = nfe_step
-            if cfg_strength is not None:
-                request_data["cfg_strength"] = cfg_strength
-            
-            # Send request
-            request_start = time.time()
-            response = self.session.post(
-                f"{self.base_url}/tts/stream",
-                json=request_data,
-                stream=True,
-                timeout=(3, 60),
-                headers={
-                    'Connection': 'keep-alive',
-                    'Accept-Encoding': 'identity',
-                }
-            )
-            stats.connection_time_ms = (time.time() - request_start) * 1000
-            
-            self._log(f"✅ Connected (took {stats.connection_time_ms:.1f}ms)")
-            
-            if response.status_code != 200:
-                self._log(f"❌ Error: HTTP {response.status_code}")
-                try:
-                    error_detail = response.json()
-                    self._log(f"   Error detail: {error_detail}")
-                except:
-                    error_detail = response.text[:500]
-                    self._log(f"   Response: {error_detail}")
-                raise Exception(f"Server returned status {response.status_code}: {error_detail}")
-            
             # Initialize audio stream
             p = pyaudio.PyAudio()
             stream = p.open(
@@ -282,10 +226,186 @@ class StreamingTTSPlayer:
                     p.terminate()
                 except:
                     pass
-            self._log(f"🧹 Cleaned up")
     
+    def play(
+        self, 
+        text: str, 
+        character: str = "default",
+        nfe_step: Optional[int] = None,
+        cfg_strength: Optional[float] = None,
+        speed: float = 1.0,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> StreamStats:
+        """
+        Play text-to-speech
+        
+        Args:
+            text: Text to convert
+            character: Character name
+            nfe_step: Inference steps (optional)
+            cfg_strength: CFG strength (optional)
+            speed: Speed factor (optional)
+            progress_callback: Progress callback function callback(current_bytes, elapsed_ms)
+            
+        Returns:
+            StreamStats: Playback statistics
+        """
+        stats = StreamStats()
+        start_time = time.time()
+        
+        try:
+            self._log(f"📝 Text: {text[:80]}{'...' if len(text) > 80 else ''}")
+            self._log(f"👤 Character: {character}")
+            self._log(f"🚀 Connecting to {self.base_url}")
+            
+            # Initialize session
+            self._init_session()
+            
+            # Prepare request data
+            request_data = {
+                "text": text,
+                "character": character,
+                "speed": speed
+            }
+            if nfe_step is not None:
+                request_data["nfe_step"] = nfe_step
+            if cfg_strength is not None:
+                request_data["cfg_strength"] = cfg_strength
+            
+            # Send request
+            request_start = time.time()
+            response = self.session.post(
+                f"{self.base_url}/tts/stream",
+                json=request_data,
+                stream=True,
+                timeout=(3, 60),
+                headers={
+                    'Connection': 'keep-alive',
+                    'Accept-Encoding': 'identity',
+                }
+            )
+            stats.connection_time_ms = (time.time() - request_start) * 1000
+            
+            self._log(f"✅ Connected (took {stats.connection_time_ms:.1f}ms)")
+            
+            if response.status_code != 200:
+                self._log(f"❌ Error: HTTP {response.status_code}")
+                try:
+                    error_detail = response.json()
+                    self._log(f"   Error detail: {error_detail}")
+                except:
+                    error_detail = response.text[:500]
+                    self._log(f"   Response: {error_detail}")
+                raise Exception(f"Server returned status {response.status_code}: {error_detail}")
+            
+            # Play audio
+            self._play_audio_stream(response, stats, start_time, progress_callback)
+            
+            return stats
+            
+        except KeyboardInterrupt:
+            self._log(f"⏸️  Interrupted by user")
+            raise
+        except requests.exceptions.Timeout:
+            self._log(f"❌ Request timeout")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            self._log(f"❌ Connection error: {e}")
+            raise
+        except Exception as e:
+            self._log(f"❌ Error: {e}")
+            raise
+
+    def play_multi(
+        self, 
+        text_list: list, 
+        nfe_step: Optional[int] = None,
+        cfg_strength: Optional[float] = None,
+        speed: float = 1.0,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> StreamStats:
+        """
+        Play multi-character text-to-speech
+        
+        Args:
+            text_list: List of dicts with "text" and "character" keys
+            nfe_step: Inference steps (optional)
+            cfg_strength: CFG strength (optional)
+            speed: Speed factor (optional)
+            progress_callback: Progress callback function callback(current_bytes, elapsed_ms)
+            
+        Returns:
+            StreamStats: Playback statistics
+        """
+        stats = StreamStats()
+        start_time = time.time()
+        
+        try:
+            self._log(f"📝 Multi-character text: {len(text_list)} segments")
+            for i, item in enumerate(text_list):
+                self._log(f"   [{i+1}] Character: {item.get('character', 'default')}, Text: {item.get('text', '')[:60]}{'...' if len(item.get('text', '')) > 60 else ''}")
+            
+            self._log(f"🚀 Connecting to {self.base_url}")
+            
+            # Initialize session
+            self._init_session()
+            
+            # Prepare request data
+            request_data = {
+                "text_list": text_list,
+                "speed": speed
+            }
+            if nfe_step is not None:
+                request_data["nfe_step"] = nfe_step
+            if cfg_strength is not None:
+                request_data["cfg_strength"] = cfg_strength
+            
+            # Send request
+            request_start = time.time()
+            response = self.session.post(
+                f"{self.base_url}/tts/stream-multi",
+                json=request_data,
+                stream=True,
+                timeout=(3, 60),
+                headers={
+                    'Connection': 'keep-alive',
+                    'Accept-Encoding': 'identity',
+                }
+            )
+            stats.connection_time_ms = (time.time() - request_start) * 1000
+            
+            self._log(f"✅ Connected (took {stats.connection_time_ms:.1f}ms)")
+            
+            if response.status_code != 200:
+                self._log(f"❌ Error: HTTP {response.status_code}")
+                try:
+                    error_detail = response.json()
+                    self._log(f"   Error detail: {error_detail}")
+                except:
+                    error_detail = response.text[:500]
+                    self._log(f"   Response: {error_detail}")
+                raise Exception(f"Server returned status {response.status_code}: {error_detail}")
+            
+            # Play audio stream
+            self._play_audio_stream(response, stats, start_time, progress_callback)
+            
+            return stats
+            
+        except KeyboardInterrupt:
+            self._log(f"⏸️  Interrupted by user")
+            raise
+        except requests.exceptions.Timeout:
+            self._log(f"❌ Request timeout")
+            raise
+        except requests.exceptions.ConnectionError as e:
+            self._log(f"❌ Connection error: {e}")
+            raise
+        except Exception as e:
+            self._log(f"❌ Error: {e}")
+            raise
+
     def close(self):
-        """Close session"""
+        """Close session and clean up resources"""
         if self.session:
             self.session.close()
             self.session = None
@@ -297,13 +417,15 @@ class StreamingTTSPlayer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit"""
         self.close()
+        return False
 
 
 def play_tts(
     text: str,
     character: str = "default",
     base_url: str = "http://127.0.0.1:8000",
-    verbose: bool = True
+    verbose: bool = True,
+    speed: float = 1.0
 ) -> StreamStats:
     """
     Convenience function: Play single text
@@ -313,12 +435,41 @@ def play_tts(
         character: Character name
         base_url: TTS server address
         verbose: Whether to print detailed logs
+        speed: Speed factor
         
     Returns:
         StreamStats: Playback statistics
     """
-    with StreamingTTSPlayer(base_url=base_url, verbose=verbose) as player:
-        return player.play(text, character)
+    player = StreamingTTSPlayer(base_url=base_url, verbose=verbose)
+    try:
+        return player.play(text, character, speed=speed)
+    finally:
+        player.close()
+
+
+def play_tts_multi(
+    text_list: list,
+    base_url: str = "http://127.0.0.1:8000",
+    verbose: bool = True,
+    speed: float = 1.0
+) -> StreamStats:
+    """
+    Convenience function: Play multi-character text
+    
+    Args:
+        text_list: List of dicts with "text" and "character" keys
+        base_url: TTS server address
+        verbose: Whether to print detailed logs
+        speed: Speed factor
+        
+    Returns:
+        StreamStats: Playback statistics
+    """
+    player = StreamingTTSPlayer(base_url=base_url, verbose=verbose)
+    try:
+        return player.play_multi(text_list, speed=speed)
+    finally:
+        player.close()
 
 
 # ============================================================================
@@ -349,7 +500,7 @@ if __name__ == "__main__":
         texts = [
             "First test text.",
             "Second test text, slightly longer to test the effect of streaming playback.",
-            "\"What's wrong with you today? You didn't answer calls or messages, you nearly scared me to death!\" \"I was in a meeting! Didn't I tell you it was the project report today? You knew that.\" \"Well, you should at least find time to check your phone.\" \"Come on, can't you say something nice for a change? Have you been clingy lately?\" \"Clingy? I didn't bother you for three days last week when you said you were busy! Don't you miss me at all?\" \"I do miss you! But I also have to work, honey. Do you think I'm a superhero?\" \"Why are you so aggressive? I'm just worried about you...\" \"Ah... I was wrong. I was just under too much pressure today, shouldn't have taken it out on you.\""
+            "Third test text to demonstrate multiple sequential playbacks."
         ]
         
         for i, text in enumerate(texts, 1):
@@ -397,6 +548,34 @@ if __name__ == "__main__":
     
     with StreamingTTSPlayer(audio_config=custom_config, verbose=True) as player:
         player.play("Playback using custom audio configuration.")
+    
+    
+    # Method 5: Multi-character dialogue
+    print("\n" + "="*80)
+    print("Example 5: Multi-character dialogue")
+    print("="*80 + "\n")
+    
+    dialogue = [
+        {
+            "text": "你今天到底怎么回事啊？电话不接消息不回，急死我了！",
+            "character": "female_2"
+        },
+        {
+            "text": "我开会呢！不是说了今天项目汇报吗？你明明知道的呀。",
+            "character": "male_1"
+        },
+        {
+            "text": "那也总该抽空看一眼手机吧？",
+            "character": "female_2"
+        },
+        {
+            "text": "你最近怎么这么黏人啊？",
+            "character": "male_1"
+        }
+    ]
+    
+    stats = play_tts_multi(dialogue)
+    print(f"\nReturned statistics: RTF = {stats.rtf:.2f}x\n")
     
     
     print("\n" + "="*80)

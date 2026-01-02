@@ -36,4 +36,4 @@ def play_from_json(json_file: str):
 
 if __name__ == "__main__":
     # 使用示例
-    play_from_json("input.json")
+    play_from_json("json/stream_input.json")
