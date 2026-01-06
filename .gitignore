@@ -1,4 +1,58 @@
-# Ignore personal configuration files
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data
+*.csv
+*.json
+*.wav
+*.mp3
+*.flac
+
+# Configuration files that might contain sensitive data
 characters.json
 
-__pycache__/
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+.lingma/
+
+ai chat/
+audio/
+
+test/
