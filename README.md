@@ -65,11 +65,11 @@ Additionally, you may need to install system-level dependencies for audio proces
 3. Make sure your F5-TTS installation is working properly
 
 ### 2. Configure Characters
-1. Copy the `characters.json.template` file to create a new file named `characters.json`:
+1. Copy the `characters.json.template` file to create a new file named `characters.json` in `core/`:
    ```bash
-   cp characters.json.template characters.json
+   cp characters.json.template core/characters.json
    ```
-2. Modify the `characters.json` file to update the audio file paths and reference text as needed for your own audio files
+2. Modify the `core/characters.json` file to update the audio file paths and reference text as needed for your own audio files
 3. Ensure the audio files referenced in the configuration exist in the specified paths
 
 ### 3. Audio Files
@@ -80,7 +80,7 @@ Additionally, you may need to install system-level dependencies for audio proces
 
 ## Configuration File Structure
 
-The `characters.json` file contains character definitions in the following format:
+The `core/characters.json` file contains character definitions in the following format:
 
 ```json
 {
@@ -163,7 +163,7 @@ curl -X GET http://localhost:8000/health
 
 ## Notes
 
-1. The `characters.json` file is ignored by Git to protect personal configuration
+1. The `core/characters.json` file is ignored by Git to protect personal configuration
 2. Make sure audio file paths in the configuration are correct
 3. Reference text should match the content of the reference audio
-4. The configuration is loaded dynamically, so changes to `characters.json` take effect without restarting the server
+4. The configuration is loaded dynamically, so changes to `core/characters.json` take effect without restarting the server

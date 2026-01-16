@@ -1,0 +1,15 @@
+{
+     "default": {
+        "ref_file": "path/to/audio/female_1.wav",
+        "ref_text": "与音频匹配的文本内容"
+    },
+    "character_name_1": {
+        "ref_file": "path/to/audio/female_1.wav",
+        "ref_text": "与音频匹配的文本内容"
+    },
+
+    "character_name_2": {
+        "ref_file": "path/to/audio/female_2.wav",
+        "ref_text": "示例文本，替换为您自己的参考音频和文本"
+    }
+}
