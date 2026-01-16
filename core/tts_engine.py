@@ -44,7 +44,7 @@ class TTSConfig:
     }
     
     # 文件路径
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
     CHARACTERS_FILE = os.path.join(BASE_DIR, "json/characters.json")
     OUTPUT_WAV = os.path.join(BASE_DIR, "output.wav")
 

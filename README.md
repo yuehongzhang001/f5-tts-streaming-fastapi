@@ -99,7 +99,7 @@ The `characters.json` file contains character definitions in the following forma
 Run the API server:
 
 ```bash
-python api_server.py
+python -m core.api_server
 ```
 
 The API server provides endpoints for:

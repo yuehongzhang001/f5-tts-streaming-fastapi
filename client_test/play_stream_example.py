@@ -1,4 +1,5 @@
 import json
+import os
 from streaming_tts_player import play_tts
 
 
@@ -36,4 +37,5 @@ def play_from_json(json_file: str):
 
 if __name__ == "__main__":
     # 使用示例
-    play_from_json("json/stream_input.json")
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    play_from_json(os.path.join(repo_root, "json", "stream_input.json"))
