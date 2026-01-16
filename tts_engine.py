@@ -75,6 +75,11 @@ def create_wav_header(sample_rate: int, num_channels: int = 1, bits_per_sample: 
 def smart_split(text: str, first_chunk_max: int = 135, regular_chunk_max: int = 135) -> List[str]:
     """
     智能分句 - 基于F5-TTS官方实现，使用UTF-8字节计数
+    策略：
+    1) 先按完整停顿（。！？；：等）切成完整句子；
+    2) 依次装入 chunk，尽量把多个完整句拼到上限以内；
+    3) 某个完整句本身过长时，才按逗号/顿号等弱停顿二次切分；
+    4) 若仍然过长或没有标点，则按长度硬切。
     
     Args:
         text: 输入文本
@@ -85,34 +90,91 @@ def smart_split(text: str, first_chunk_max: int = 135, regular_chunk_max: int = 
         分割后的句子列表
     """
     text = re.sub(r'\s+', ' ', text.strip())
-    
-    chunks = []
+
+    def utf8_len(s: str) -> int:
+        return len(s.encode("utf-8"))
+
+    def safe_join(current: str, segment: str) -> str:
+        if current and segment and len(segment[0].encode("utf-8")) == 1:
+            return current + " " + segment
+        return current + segment
+
+    def hard_split(segment: str, max_bytes: int) -> List[str]:
+        """无标点时按长度硬切，保证每段不超过 max_bytes。"""
+        parts: List[str] = []
+        buf = ""
+        for ch in segment:
+            if utf8_len(buf + ch) > max_bytes and buf:
+                parts.append(buf)
+                buf = ch
+            else:
+                buf += ch
+        if buf:
+            parts.append(buf)
+        return parts
+
+    # 固定宽度的强停顿匹配，避免可变长度的 look-behind
+    strong_pattern = r"(?<=[。！？!?\uff1b\uff1a;:…])\s*"
+    # 弱停顿：逗号、顿号、单/三点省略号，按与逗号同级处理（使用非回溯，避免可变宽度问题）
+    weak_pattern = r"(?:[，,、…]|\.{3})\s*"
+
+    chunks: List[str] = []
     current_chunk = ""
-    sentences = re.split(r"(?<=[;:,.!?])\s+|(?<=[；：，。！？])", text)
-    
-    for sentence in sentences:
+
+    def push_current():
+        nonlocal current_chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = ""
+
+    def add_segment(segment: str):
+        nonlocal current_chunk
+        if not segment:
+            return
+        max_bytes = first_chunk_max if not chunks else regular_chunk_max
+        if current_chunk:
+            proposed = safe_join(current_chunk, segment)
+            if utf8_len(proposed) <= max_bytes:
+                current_chunk = proposed
+                return
+            push_current()
+            max_bytes = first_chunk_max if not chunks else regular_chunk_max
+
+        # current_chunk 为空的情况
+        if utf8_len(segment) <= max_bytes:
+            current_chunk = segment
+            return
+
+        # 段本身过长，先按弱停顿切，再按硬切兜底
+        weak_segments = re.split(weak_pattern, segment)
+        for ws in weak_segments:
+            ws = ws.strip()
+            if not ws:
+                continue
+            max_bytes = first_chunk_max if not chunks else regular_chunk_max
+            if utf8_len(ws) <= max_bytes:
+                if current_chunk:
+                    proposed = safe_join(current_chunk, ws)
+                    if utf8_len(proposed) <= max_bytes:
+                        current_chunk = proposed
+                        continue
+                    push_current()
+                current_chunk = ws
+            else:
+                # 仍然过长，按长度硬切
+                for piece in hard_split(ws, max_bytes):
+                    if current_chunk:
+                        push_current()
+                    current_chunk = piece
+
+    primary_sentences = re.split(strong_pattern, text)
+    for sentence in primary_sentences:
         sentence = sentence.strip()
         if not sentence:
             continue
-        
-        # 关键：使用UTF-8字节数而非字符数
-        current_bytes = len(current_chunk.encode("utf-8"))
-        sentence_bytes = len(sentence.encode("utf-8"))
-        max_bytes = first_chunk_max if not chunks else regular_chunk_max
-        
-        if current_bytes + sentence_bytes <= max_bytes:
-            if current_chunk and len(sentence[0].encode("utf-8")) == 1:
-                current_chunk += " " + sentence
-            else:
-                current_chunk += sentence
-        else:
-            if current_chunk:
-                chunks.append(current_chunk)
-            current_chunk = sentence
-    
-    if current_chunk:
-        chunks.append(current_chunk)
-    
+        add_segment(sentence)
+
+    push_current()
     return [c for c in chunks if len(c) >= 2]
 
 
